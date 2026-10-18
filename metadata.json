@@ -1,0 +1,6 @@
+{
+  "name": "BISTAR B2B-DMS",
+  "description": "Universal B2B Distribution Management System & Wholesale Commerce Platform for bulk catalog orders, tiered pricing, route schedules, and client approval gating.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
