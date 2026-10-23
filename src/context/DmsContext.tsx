@@ -1,95 +1,124 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import {
-  User,
+  ShopProfile,
   Brand,
   Category,
-  Product,
-  DeliveryRoute,
-  Order,
+  B2BProduct,
+  MarketRoute,
+  WholesaleOrder,
   OrderItem,
   CartItem,
-  OrderStatus
+  OrderStatus,
+  PaymentMethod,
+  BusinessSector
 } from '../types/index.ts';
 import {
   INITIAL_BRANDS,
   INITIAL_CATEGORIES,
   INITIAL_ROUTES,
-  INITIAL_USERS,
+  INITIAL_SHOPS,
   INITIAL_PRODUCTS,
   INITIAL_ORDERS
 } from '../data/mockData.ts';
-import { canAccessB2BPricing, calculateOrderTotals } from '../utils/pricing.ts';
+import { canAccessB2BPricing, calculateOrderTotals, getEffectiveTierPrice } from '../utils/pricing.ts';
 import { soundManager } from '../utils/audioAlarm.ts';
 
 interface DmsContextType {
-  currentUser: User | null;
-  users: User[];
-  products: Product[];
+  currentUser: ShopProfile | null;
+  currentShop: ShopProfile | null;
+  users: ShopProfile[];
+  shops: ShopProfile[];
+  products: B2BProduct[];
   brands: Brand[];
   categories: Category[];
-  routes: DeliveryRoute[];
-  orders: Order[];
+  routes: MarketRoute[];
+  orders: WholesaleOrder[];
   cart: CartItem[];
   currency: string;
   isSoundMuted: boolean;
+  unacknowledgedOrdersCount: number;
   unseenOrdersCount: number;
   
-  // Auth & Roles
-  setCurrentUser: (user: User | null) => void;
-  loginByPhone: (phone: string) => boolean;
-  registerClient: (data: { phone: string; ownerName: string; shopName: string; routeId: string }) => User;
-  approveClient: (userId: string, expiryMonths?: number) => void;
-  suspendClient: (userId: string) => void;
-  updateClientValidity: (userId: string, expiresAt: string | null) => void;
+  // Role & Admin Access
+  activeRole: 'CLIENT' | 'ADMIN';
+  isAdminAuthenticated: boolean;
+  setActiveRole: (role: 'CLIENT' | 'ADMIN') => void;
+  adminLogin: (pinOrPass: string) => boolean;
+  adminLogout: () => void;
+  setCurrentUser: (shop: ShopProfile | null) => void;
+  setCurrentShop: (shop: ShopProfile | null) => void;
+
+  // Shop Onboarding & Approval Gating
+  registerShop: (data: {
+    shopName: string;
+    ownerName: string;
+    phone: string;
+    businessSector: BusinessSector;
+    routeId: string;
+    tradeLicenseNo?: string;
+  }) => ShopProfile;
+  approveShop: (shopId: string, validityDays?: number) => void;
+  rejectShop: (shopId: string) => void;
+  setShopExpiry: (shopId: string, expiryEpochMs: number | null) => void;
+  adjustCreditLimit: (shopId: string, newLimitBdt: number) => void;
+  recordCreditPayment: (shopId: string, amountPaidBdt: number) => void;
 
   // Catalog & Inventory
-  addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updateProduct: (id: string, updates: Partial<Product>) => void;
+  addProduct: (product: Omit<B2BProduct, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateProduct: (id: string, updates: Partial<B2BProduct>) => void;
   deleteProduct: (id: string) => void;
-  addRoute: (route: Omit<DeliveryRoute, 'id' | 'createdAt'>) => void;
-  updateRoute: (id: string, updates: Partial<DeliveryRoute>) => void;
+
+  // Routes
+  addRoute: (route: Omit<MarketRoute, 'id' | 'createdAt'>) => void;
+  updateRoute: (id: string, updates: Partial<MarketRoute>) => void;
   deleteRoute: (id: string) => void;
 
-  // Cart & Orders
-  addToCart: (product: Product, quantity?: number) => void;
+  // Cart & Wholesale Checkout
+  addToCart: (product: B2BProduct, quantity?: number) => void;
   updateCartQty: (productId: string, quantity: number) => void;
   removeFromCart: (productId: string) => void;
   clearCart: () => void;
-  placeOrder: (notes?: string) => Order | null;
+  placeOrder: (options: {
+    notes?: string;
+    paymentMethod: PaymentMethod;
+    paidAmountBdt?: number;
+    paymentTrxId?: string;
+    paymentSenderPhone?: string;
+  }) => { success: boolean; order?: WholesaleOrder; error?: string };
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  acknowledgeOrderAlarm: (orderId?: string) => void;
+  clearUnseenOrders: () => void;
   
   // UI & System
-  setCurrency: (c: string) => void;
   toggleSoundMute: () => void;
   triggerTestAlarm: () => void;
-  clearUnseenOrders: () => void;
   resetDemoData: () => void;
 }
 
 const DmsContext = createContext<DmsContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  USERS: 'bistar_users_v1',
-  PRODUCTS: 'bistar_products_v1',
-  ROUTES: 'bistar_routes_v1',
-  ORDERS: 'bistar_orders_v1',
-  CURRENT_USER_ID: 'bistar_current_user_id_v1',
-  CURRENCY: 'bistar_currency_v1',
-  MUTED: 'bistar_muted_v1'
+  SHOPS: 'bistar_shops_v2',
+  PRODUCTS: 'bistar_products_v2',
+  ROUTES: 'bistar_routes_v2',
+  ORDERS: 'bistar_orders_v2',
+  CURRENT_SHOP_ID: 'bistar_current_shop_id_v2',
+  ACTIVE_ROLE: 'bistar_active_role_v2',
+  ADMIN_AUTH: 'bistar_admin_auth_v2',
+  MUTED: 'bistar_muted_v2'
 };
 
 export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Initialize state with localStorage fallbacks
-  const [users, setUsers] = useState<User[]>(() => {
+  const [shops, setShops] = useState<ShopProfile[]>(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.USERS);
-      return stored ? JSON.parse(stored) : INITIAL_USERS;
+      const stored = localStorage.getItem(STORAGE_KEYS.SHOPS);
+      return stored ? JSON.parse(stored) : INITIAL_SHOPS;
     } catch {
-      return INITIAL_USERS;
+      return INITIAL_SHOPS;
     }
   });
 
-  const [products, setProducts] = useState<Product[]>(() => {
+  const [products, setProducts] = useState<B2BProduct[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
       return stored ? JSON.parse(stored) : INITIAL_PRODUCTS;
@@ -98,7 +127,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
-  const [routes, setRoutes] = useState<DeliveryRoute[]>(() => {
+  const [routes, setRoutes] = useState<MarketRoute[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.ROUTES);
       return stored ? JSON.parse(stored) : INITIAL_ROUTES;
@@ -107,7 +136,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
-  const [orders, setOrders] = useState<Order[]>(() => {
+  const [orders, setOrders] = useState<WholesaleOrder[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.ORDERS);
       return stored ? JSON.parse(stored) : INITIAL_ORDERS;
@@ -119,22 +148,32 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [brands] = useState<Brand[]>(INITIAL_BRANDS);
   const [categories] = useState<Category[]>(INITIAL_CATEGORIES);
 
-  const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
+  const [currentShopId, setCurrentShopId] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID) || 'u-retailer-1';
+      return localStorage.getItem(STORAGE_KEYS.CURRENT_SHOP_ID) || 'u-retailer-1';
     } catch {
       return 'u-retailer-1';
     }
   });
 
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [currency, setCurrencyState] = useState<string>(() => {
+  const [activeRole, setActiveRoleState] = useState<'CLIENT' | 'ADMIN'>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEYS.CURRENCY) || '$';
+      return (localStorage.getItem(STORAGE_KEYS.ACTIVE_ROLE) as 'CLIENT' | 'ADMIN') || 'CLIENT';
     } catch {
-      return '$';
+      return 'CLIENT';
     }
   });
+
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.ADMIN_AUTH) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const currency = '৳'; // 100% Bangladeshi Taka (৳ BDT)
 
   const [isSoundMuted, setIsSoundMuted] = useState<boolean>(() => {
     try {
@@ -144,16 +183,14 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
-  const [unseenOrdersCount, setUnseenOrdersCount] = useState<number>(0);
-
-  // Sync state to LocalStorage
+  // Sync to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+      localStorage.setItem(STORAGE_KEYS.SHOPS, JSON.stringify(shops));
     } catch (e) {
-      console.warn('Failed to save users', e);
+      console.warn('Failed to save shops', e);
     }
-  }, [users]);
+  }, [shops]);
 
   useEffect(() => {
     try {
@@ -181,95 +218,163 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     try {
-      if (currentUserId) {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUserId);
+      if (currentShopId) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_SHOP_ID, currentShopId);
       } else {
-        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_SHOP_ID);
       }
     } catch (e) {
-      console.warn('Failed to save current user id', e);
+      console.warn('Failed to save current shop id', e);
     }
-  }, [currentUserId]);
+  }, [currentShopId]);
 
-  const currentUser = users.find(u => u.id === currentUserId) || null;
+  const currentShop = shops.find(s => s.id === currentShopId) || null;
+  const currentUser = currentShop;
 
-  const setCurrentUser = (user: User | null) => {
-    setCurrentUserId(user ? user.id : null);
+  // Unacknowledged orders count (triggers loud alarm)
+  const unacknowledgedOrders = orders.filter(
+    o => o.orderStatus === 'NEW_ALARM' && !o.alarmAcknowledged
+  );
+  const unacknowledgedOrdersCount = unacknowledgedOrders.length;
+  const unseenOrdersCount = unacknowledgedOrdersCount;
+
+  // Auto sound alarm when unacknowledged order exists in Admin mode
+  useEffect(() => {
+    if (activeRole === 'ADMIN' && unacknowledgedOrdersCount > 0 && !isSoundMuted) {
+      soundManager.playNewOrderAlarm();
+    }
+  }, [activeRole, unacknowledgedOrdersCount, isSoundMuted]);
+
+  const setActiveRole = (role: 'CLIENT' | 'ADMIN') => {
+    setActiveRoleState(role);
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_ROLE, role);
   };
 
-  const loginByPhone = (phone: string): boolean => {
-    const found = users.find(u => u.phone.trim() === phone.trim());
-    if (found) {
-      setCurrentUserId(found.id);
+  const adminLogin = (pinOrPass: string): boolean => {
+    const clean = pinOrPass.trim().toLowerCase();
+    // Valid admin credentials: PIN 1234, admin123, admin
+    if (clean === '1234' || clean === 'admin' || clean === 'admin123' || clean === 'bistar') {
+      setIsAdminAuthenticated(true);
+      setActiveRole('ADMIN');
+      localStorage.setItem(STORAGE_KEYS.ADMIN_AUTH, 'true');
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_ROLE, 'ADMIN');
+      const adminShop = shops.find(s => s.role === 'SUPER_ADMIN');
+      if (adminShop) {
+        setCurrentShopId(adminShop.id);
+      }
       return true;
     }
     return false;
   };
 
-  const registerClient = (data: {
-    phone: string;
-    ownerName: string;
+  const adminLogout = () => {
+    setIsAdminAuthenticated(false);
+    setActiveRole('CLIENT');
+    localStorage.removeItem(STORAGE_KEYS.ADMIN_AUTH);
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_ROLE, 'CLIENT');
+    // Switch to first approved retailer
+    const approvedShop = shops.find(s => s.role === 'B2B_CLIENT' && s.status === 'APPROVED');
+    setCurrentShopId(approvedShop ? approvedShop.id : null);
+  };
+
+  const setCurrentShop = (shop: ShopProfile | null) => {
+    setCurrentShopId(shop ? shop.id : null);
+  };
+
+  const setCurrentUser = setCurrentShop;
+
+  // Shop Onboarding
+  const registerShop = (data: {
     shopName: string;
+    ownerName: string;
+    phone: string;
+    businessSector: BusinessSector;
     routeId: string;
-  }): User => {
-    const newUser: User = {
+    tradeLicenseNo?: string;
+  }): ShopProfile => {
+    const route = routes.find(r => r.id === data.routeId) || routes[0];
+    const newShop: ShopProfile = {
       id: `u-${Date.now()}`,
-      phone: data.phone.trim(),
-      ownerName: data.ownerName.trim(),
+      userId: `uid-${Date.now()}`,
       shopName: data.shopName.trim(),
+      ownerName: data.ownerName.trim(),
+      phone: data.phone.trim(),
+      businessSector: data.businessSector,
+      tradeLicenseNo: data.tradeLicenseNo?.trim() || undefined,
+      routeId: route.id,
+      routeName: route.routeName,
       role: 'B2B_CLIENT',
       status: 'PENDING',
-      accessExpires: null,
-      routeId: data.routeId,
+      validityExpiryEpochMs: null,
+      creditLimitBdt: 30000, // Initial default credit limit ৳30,000
+      currentDueBdt: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    setUsers(prev => [newUser, ...prev]);
-    setCurrentUserId(newUser.id);
-    return newUser;
+    setShops(prev => [newShop, ...prev]);
+    setCurrentShopId(newShop.id);
+    return newShop;
   };
 
-  const approveClient = (userId: string, expiryMonths: number = 12) => {
-    const expiry = new Date();
-    expiry.setMonth(expiry.getMonth() + expiryMonths);
-
-    setUsers(prev =>
-      prev.map(u =>
-        u.id === userId
+  const approveShop = (shopId: string, validityDays: number = 365) => {
+    const expiryEpochMs = Date.now() + validityDays * 24 * 60 * 60 * 1000;
+    setShops(prev =>
+      prev.map(s =>
+        s.id === shopId
           ? {
-              ...u,
+              ...s,
               status: 'APPROVED',
-              accessExpires: expiry.toISOString(),
+              validityExpiryEpochMs: expiryEpochMs,
               updatedAt: new Date().toISOString()
             }
-          : u
+          : s
       )
     );
   };
 
-  const suspendClient = (userId: string) => {
-    setUsers(prev =>
-      prev.map(u =>
-        u.id === userId
-          ? { ...u, status: 'SUSPENDED', updatedAt: new Date().toISOString() }
-          : u
+  const rejectShop = (shopId: string) => {
+    setShops(prev =>
+      prev.map(s =>
+        s.id === shopId
+          ? { ...s, status: 'REJECTED', updatedAt: new Date().toISOString() }
+          : s
       )
     );
   };
 
-  const updateClientValidity = (userId: string, expiresAt: string | null) => {
-    setUsers(prev =>
-      prev.map(u =>
-        u.id === userId
-          ? { ...u, accessExpires: expiresAt, updatedAt: new Date().toISOString() }
-          : u
+  const setShopExpiry = (shopId: string, expiryEpochMs: number | null) => {
+    setShops(prev =>
+      prev.map(s =>
+        s.id === shopId
+          ? { ...s, validityExpiryEpochMs: expiryEpochMs, updatedAt: new Date().toISOString() }
+          : s
+      )
+    );
+  };
+
+  const adjustCreditLimit = (shopId: string, newLimitBdt: number) => {
+    setShops(prev =>
+      prev.map(s =>
+        s.id === shopId
+          ? { ...s, creditLimitBdt: Math.max(0, newLimitBdt), updatedAt: new Date().toISOString() }
+          : s
+      )
+    );
+  };
+
+  const recordCreditPayment = (shopId: string, amountPaidBdt: number) => {
+    setShops(prev =>
+      prev.map(s =>
+        s.id === shopId
+          ? { ...s, currentDueBdt: Math.max(0, s.currentDueBdt - amountPaidBdt), updatedAt: new Date().toISOString() }
+          : s
       )
     );
   };
 
   // Catalog
-  const addProduct = (prodData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newProd: Product = {
+  const addProduct = (prodData: Omit<B2BProduct, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const newProd: B2BProduct = {
       ...prodData,
       id: `p-${Date.now()}`,
       createdAt: new Date().toISOString().split('T')[0],
@@ -278,7 +383,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProducts(prev => [newProd, ...prev]);
   };
 
-  const updateProduct = (id: string, updates: Partial<Product>) => {
+  const updateProduct = (id: string, updates: Partial<B2BProduct>) => {
     setProducts(prev =>
       prev.map(p =>
         p.id === id
@@ -293,8 +398,8 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Routes
-  const addRoute = (routeData: Omit<DeliveryRoute, 'id' | 'createdAt'>) => {
-    const newRoute: DeliveryRoute = {
+  const addRoute = (routeData: Omit<MarketRoute, 'id' | 'createdAt'>) => {
+    const newRoute: MarketRoute = {
       ...routeData,
       id: `r-${Date.now()}`,
       createdAt: new Date().toISOString().split('T')[0]
@@ -302,7 +407,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRoutes(prev => [...prev, newRoute]);
   };
 
-  const updateRoute = (id: string, updates: Partial<DeliveryRoute>) => {
+  const updateRoute = (id: string, updates: Partial<MarketRoute>) => {
     setRoutes(prev => prev.map(r => (r.id === id ? { ...r, ...updates } : r)));
   };
 
@@ -311,7 +416,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Cart
-  const addToCart = (product: Product, quantity = 1) => {
+  const addToCart = (product: B2BProduct, quantity = 1) => {
     setCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
       if (existing) {
@@ -321,7 +426,7 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             : item
         );
       }
-      return [...prev, { product, quantity: Math.max(product.minOrderQty, quantity) }];
+      return [...prev, { product, quantity: Math.max(product.minOrderQty || 1, quantity) }];
     });
   };
 
@@ -343,67 +448,124 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCart([]);
   };
 
-  // Place Order
-  const placeOrder = (notes?: string): Order | null => {
-    if (!currentUser || cart.length === 0) return null;
+  // Place Order with Payment Method, Credit Ledger Validation & Mobile Banking
+  const placeOrder = (options: {
+    notes?: string;
+    paymentMethod: PaymentMethod;
+    paidAmountBdt?: number;
+    paymentTrxId?: string;
+    paymentSenderPhone?: string;
+  }): { success: boolean; order?: WholesaleOrder; error?: string } => {
+    if (!currentShop || cart.length === 0) {
+      return { success: false, error: 'কার্ট খালি অথবা দোকান প্রোফাইল অনুপস্থিত।' };
+    }
 
-    const access = canAccessB2BPricing(currentUser);
+    const access = canAccessB2BPricing(currentShop);
     const isApproved = access.allowed;
     const totals = calculateOrderTotals(cart, isApproved);
 
-    const orderNumber = `BIS-${Math.floor(1000 + Math.random() * 9000)}`;
-    const userRoute = routes.find(r => r.id === currentUser.routeId) || routes[0];
+    // Credit Ledger (বাকি খাতা) validation
+    if (options.paymentMethod === 'CREDIT_LEDGER') {
+      const newPotentialDue = currentShop.currentDueBdt + totals.totalB2B;
+      if (newPotentialDue > currentShop.creditLimitBdt) {
+        const availableCredit = Math.max(0, currentShop.creditLimitBdt - currentShop.currentDueBdt);
+        return {
+          success: false,
+          error: `ক্রেডিট সীমা অতিক্রম করেছে! অনুমোদিত বাকি সীমা: ৳${currentShop.creditLimitBdt.toLocaleString()} | বর্তমান বাকি: ৳${currentShop.currentDueBdt.toLocaleString()} | উপলব্ধ ক্রেডিট: ৳${availableCredit.toLocaleString()}`
+        };
+      }
+    }
 
-    const orderItems: OrderItem[] = cart.map((ci, idx) => ({
-      id: `oi-${Date.now()}-${idx}`,
-      orderId: `ord-${Date.now()}`,
-      productId: ci.product.id,
-      product: ci.product,
-      quantity: ci.quantity,
-      unitPrice: isApproved ? ci.product.b2bPrice : ci.product.mrpPrice,
-      subtotal: (isApproved ? ci.product.b2bPrice : ci.product.mrpPrice) * ci.quantity
-    }));
+    const invoiceNumber = `BIS-${Math.floor(1000 + Math.random() * 9000)}`;
+    const shopRoute = routes.find(r => r.id === currentShop.routeId) || routes[0];
 
-    const newOrder: Order = {
+    const orderItems: OrderItem[] = cart.map((ci, idx) => {
+      const tierResult = getEffectiveTierPrice(ci.product, ci.quantity, isApproved);
+      return {
+        id: `oi-${Date.now()}-${idx}`,
+        orderId: `ord-${Date.now()}`,
+        productId: ci.product.id,
+        product: ci.product,
+        quantity: ci.quantity,
+        unitPrice: tierResult.unitPrice,
+        mrpPrice: ci.product.mrpBdt || ci.product.mrpPrice || 0,
+        subtotal: tierResult.unitPrice * ci.quantity,
+        tierApplied: tierResult.tier
+      };
+    });
+
+    const isFullPaid = options.paymentMethod === 'BKASH' || options.paymentMethod === 'NAGAD' || options.paymentMethod === 'ROCKET';
+    const paidAmount = options.paidAmountBdt !== undefined ? options.paidAmountBdt : (isFullPaid ? totals.totalB2B : 0);
+    const dueAmount = Math.max(0, totals.totalB2B - paidAmount);
+
+    const newOrder: WholesaleOrder = {
       id: `ord-${Date.now()}`,
-      orderNumber,
-      userId: currentUser.id,
-      user: currentUser,
-      routeId: currentUser.routeId || userRoute?.id || null,
-      route: userRoute,
-      totalAmount: totals.totalB2B,
-      totalMrpAmount: totals.totalMrp,
-      status: 'RECEIVED',
+      invoiceNumber,
+      userId: currentShop.userId,
+      shopId: currentShop.id,
+      shopName: currentShop.shopName,
+      ownerName: currentShop.ownerName,
+      shopPhone: currentShop.phone,
+      routeId: currentShop.routeId || shopRoute.id,
+      routeName: shopRoute.routeName,
+      deliveryScheduleLabel: `${shopRoute.deliveryDays} (Cutoff: ${shopRoute.cutoffTime})`,
+      totalCartons: totals.totalQuantity,
+      subtotalMrpBdt: totals.totalMrp,
+      totalWholesaleBdt: totals.totalB2B,
+      totalSavingsBdt: totals.retailerSavings,
+      paymentMethod: options.paymentMethod,
+      paidAmountBdt: paidAmount,
+      dueAmountBdt: dueAmount,
+      paymentTrxId: options.paymentTrxId,
+      paymentSenderPhone: options.paymentSenderPhone,
+      orderStatus: 'NEW_ALARM', // Triggers loud order alarm
+      alarmAcknowledged: false,
+      notes: options.notes,
       items: orderItems,
-      notes: notes || undefined,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
     setOrders(prev => [newOrder, ...prev]);
+
+    // If Credit Ledger or partial COD with due, update shop's current due in ledger
+    if (options.paymentMethod === 'CREDIT_LEDGER' || dueAmount > 0) {
+      setShops(prev =>
+        prev.map(s =>
+          s.id === currentShop.id
+            ? { ...s, currentDueBdt: s.currentDueBdt + dueAmount }
+            : s
+        )
+      );
+    }
+
     clearCart();
 
-    // Play sounds
+    // Trigger audible alarm and success sounds
     soundManager.playSuccessChime();
     soundManager.playNewOrderAlarm();
-    setUnseenOrdersCount(prev => prev + 1);
 
-    return newOrder;
+    return { success: true, order: newOrder };
   };
 
   const updateOrderStatus = (orderId: string, status: OrderStatus) => {
     setOrders(prev =>
       prev.map(o =>
         o.id === orderId
-          ? { ...o, status, updatedAt: new Date().toISOString() }
+          ? { ...o, orderStatus: status, updatedAt: new Date().toISOString() }
           : o
       )
     );
   };
 
-  const setCurrency = (c: string) => {
-    setCurrencyState(c);
-    localStorage.setItem(STORAGE_KEYS.CURRENCY, c);
+  const acknowledgeOrderAlarm = (orderId?: string) => {
+    setOrders(prev =>
+      prev.map(o =>
+        !orderId || o.id === orderId
+          ? { ...o, alarmAcknowledged: true, orderStatus: o.orderStatus === 'NEW_ALARM' ? 'CONFIRMED' : o.orderStatus }
+          : o
+      )
+    );
   };
 
   const toggleSoundMute = () => {
@@ -419,30 +581,25 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     soundManager.playNewOrderAlarm();
   };
 
-  const clearUnseenOrders = () => {
-    setUnseenOrdersCount(0);
-  };
-
   const resetDemoData = () => {
-    setUsers(INITIAL_USERS);
+    setShops(INITIAL_SHOPS);
     setProducts(INITIAL_PRODUCTS);
     setRoutes(INITIAL_ROUTES);
     setOrders(INITIAL_ORDERS);
-    setCurrentUserId('u-retailer-1');
+    setCurrentShopId('u-retailer-1');
+    setActiveRole('CLIENT');
+    setIsAdminAuthenticated(false);
     setCart([]);
-    setUnseenOrdersCount(0);
-    localStorage.removeItem(STORAGE_KEYS.USERS);
-    localStorage.removeItem(STORAGE_KEYS.PRODUCTS);
-    localStorage.removeItem(STORAGE_KEYS.ROUTES);
-    localStorage.removeItem(STORAGE_KEYS.ORDERS);
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    localStorage.clear();
   };
 
   return (
     <DmsContext.Provider
       value={{
         currentUser,
-        users,
+        currentShop,
+        users: shops,
+        shops,
         products,
         brands,
         categories,
@@ -451,13 +608,21 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cart,
         currency,
         isSoundMuted,
+        unacknowledgedOrdersCount,
         unseenOrdersCount,
+        activeRole,
+        isAdminAuthenticated,
+        setActiveRole,
+        adminLogin,
+        adminLogout,
         setCurrentUser,
-        loginByPhone,
-        registerClient,
-        approveClient,
-        suspendClient,
-        updateClientValidity,
+        setCurrentShop,
+        registerShop,
+        approveShop,
+        rejectShop,
+        setShopExpiry,
+        adjustCreditLimit,
+        recordCreditPayment,
         addProduct,
         updateProduct,
         deleteProduct,
@@ -470,10 +635,10 @@ export const DmsProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         clearCart,
         placeOrder,
         updateOrderStatus,
-        setCurrency,
+        acknowledgeOrderAlarm,
+        clearUnseenOrders: () => acknowledgeOrderAlarm(),
         toggleSoundMute,
         triggerTestAlarm,
-        clearUnseenOrders,
         resetDemoData
       }}
     >

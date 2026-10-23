@@ -1,125 +1,154 @@
 import React, { useState } from 'react';
 import { useDms } from '../context/DmsContext.tsx';
 import { formatCurrency } from '../utils/pricing.ts';
-import { PackageCheck, Clock, Truck, CheckCircle2, XCircle, Printer, FileText, ChevronRight } from 'lucide-react';
-import { Order } from '../types/index.ts';
+import { PackageCheck, Clock, Truck, CheckCircle2, XCircle, Printer, CreditCard, Banknote, Smartphone } from 'lucide-react';
+import { WholesaleOrder } from '../types/index.ts';
 import { DeliveryInvoiceModal } from './admin/DeliveryInvoiceModal.tsx';
 
 export const ClientOrdersView: React.FC = () => {
   const { orders, currentUser, currency } = useDms();
-  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<Order | null>(null);
+  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState<WholesaleOrder | null>(null);
 
   // Filter orders for current logged in user (or all if Super Admin is browsing)
   const userOrders = currentUser?.role === 'SUPER_ADMIN'
     ? orders
-    : orders.filter(o => o.userId === currentUser?.id);
+    : orders.filter(o => o.userId === currentUser?.id || o.shopId === currentUser?.id);
 
-  const getStatusBadge = (status: Order['status']) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'RECEIVED':
+      case 'NEW_ALARM':
         return {
-          label: 'Order Received',
+          label: 'অর্ডার প্রাপ্তি (Received)',
           color: 'bg-amber-100 text-amber-800 border-amber-300',
           icon: Clock
         };
       case 'PROCESSING':
+      case 'CONFIRMED':
+      case 'PACKED':
         return {
-          label: 'Packing & Staging',
+          label: 'প্যাকিং ও স্টোর প্রস্তুতি (Staging)',
           color: 'bg-indigo-100 text-indigo-800 border-indigo-300',
           icon: PackageCheck
         };
       case 'DISPATCHED':
+      case 'ON_ROUTE':
         return {
-          label: 'Out for Route Delivery',
+          label: 'রুটে সরবরাহ চলছে (Out for Delivery)',
           color: 'bg-blue-100 text-blue-800 border-blue-300',
           icon: Truck
         };
       case 'DELIVERED':
         return {
-          label: 'Delivered & Completed',
+          label: 'বিতরণ সম্পন্ন (Delivered)',
           color: 'bg-emerald-100 text-emerald-800 border-emerald-300',
           icon: CheckCircle2
         };
-      case 'CANCELLED':
+      default:
         return {
-          label: 'Cancelled',
+          label: 'বাতিল (Cancelled)',
           color: 'bg-rose-100 text-rose-800 border-rose-300',
           icon: XCircle
         };
     }
   };
 
+  const getPaymentBadge = (method: string) => {
+    switch (method) {
+      case 'ROUTE_COD':
+        return { label: 'ক্যাশ অন ডেলিভারি (COD)', icon: Banknote, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
+      case 'CREDIT_LEDGER':
+        return { label: 'বাকি খাতা (Credit Ledger)', icon: CreditCard, color: 'text-indigo-700 bg-indigo-50 border-indigo-200' };
+      case 'BKASH':
+        return { label: 'বিকাশ (bKash)', icon: Smartphone, color: 'text-pink-700 bg-pink-50 border-pink-200' };
+      case 'NAGAD':
+        return { label: 'নগদ (Nagad)', icon: Smartphone, color: 'text-orange-700 bg-orange-50 border-orange-200' };
+      default:
+        return { label: method, icon: Banknote, color: 'text-slate-700 bg-slate-50 border-slate-200' };
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <PackageCheck className="w-5 h-5 text-indigo-600" />
-            Wholesale Orders & Dispatch History
+            পাইকারি অর্ডার ও চালান ইনভয়েস হিস্ট্রি (Order History)
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Track route delivery status, inspect itemized pack slips, and print invoices.
+            রুট ডেলিভারির লাইভ ট্র্যাকিং, কার্টুন পরিমাণ এবং প্রিন্টযোগ্য অফিসিয়াল চালান দেখুন।
           </p>
         </div>
 
-        <div className="flex items-center gap-3 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+        <div className="flex items-center gap-3 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200">
           <div>
-            <span className="text-slate-400">Total Orders:</span>
+            <span className="text-slate-400">মোট অর্ডার:</span>
             <span className="font-bold text-slate-900 ml-1">{userOrders.length}</span>
           </div>
           <div className="h-4 w-px bg-slate-200" />
           <div>
-            <span className="text-slate-400">Active Deliveries:</span>
+            <span className="text-slate-400">রুটে থাকা ডেলিভারি:</span>
             <span className="font-bold text-indigo-600 ml-1">
-              {userOrders.filter(o => o.status === 'RECEIVED' || o.status === 'PROCESSING' || o.status === 'DISPATCHED').length}
+              {userOrders.filter(o => o.status !== 'DELIVERED' && o.status !== 'CANCELLED').length}
             </span>
           </div>
         </div>
       </div>
 
       {userOrders.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
           <Clock className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h3 className="font-bold text-slate-800 text-sm">No Orders Placed Yet</h3>
+          <h3 className="font-bold text-slate-800 text-sm">কোনো অর্ডার পাওয়া যায়নি</h3>
           <p className="text-xs text-slate-400 mt-1">
-            Browse the wholesale catalog or bulk matrix to create your first order.
+            পণ্য ক্যাটালগ অথবা বাল্ক অর্ডার শিট থেকে পাইকারি পণ্য নির্বাচন করে অর্ডার তৈরি করুন।
           </p>
         </div>
       ) : (
         <div className="space-y-4">
           {userOrders.map(order => {
-            const badge = getStatusBadge(order.status);
+            const currentStatus = order.orderStatus || order.status || 'RECEIVED';
+            const badge = getStatusBadge(currentStatus);
             const StatusIcon = badge.icon;
-            const totalItemsCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
+            const totalItemsCount = order.totalCartons || order.items.reduce((sum, item) => sum + item.quantity, 0);
+            const invNumber = order.invoiceNumber || order.orderNumber || order.id;
+            const totalAmount = order.totalWholesaleBdt ?? order.totalAmount ?? 0;
+            const payBadge = getPaymentBadge(order.paymentMethod);
+            const PayIcon = payBadge.icon;
 
             return (
               <div
                 key={order.id}
-                className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden"
+                className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden"
               >
                 {/* Order Top Bar */}
                 <div className="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs font-mono">
-                      #{order.orderNumber.replace('BIS-', '')}
+                    <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-800 flex items-center justify-center font-bold text-xs font-mono">
+                      #{invNumber.replace('BIS-', '')}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900 text-sm">
-                          Order {order.orderNumber}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-extrabold text-slate-900 text-sm">
+                          চালান {invNumber}
                         </span>
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${badge.color}`}
+                          className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${badge.color}`}
                         >
                           <StatusIcon className="w-3 h-3" />
                           {badge.label}
                         </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${payBadge.color}`}
+                        >
+                          <PayIcon className="w-3 h-3" />
+                          {payBadge.label}
+                        </span>
                       </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">
-                        Placed on {new Date(order.createdAt).toLocaleDateString()} at{' '}
-                        {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {order.route && ` • Route: ${order.route.routeName}`}
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        তারিখ: {new Date(order.createdAt).toLocaleDateString()} {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {(order.routeName || order.route?.routeName) && ` • রুট: ${order.routeName || order.route?.routeName}`}
                       </div>
                     </div>
                   </div>
@@ -128,10 +157,10 @@ export const ClientOrdersView: React.FC = () => {
                   <div className="flex items-center gap-2 self-end sm:self-auto">
                     <button
                       onClick={() => setSelectedInvoiceOrder(order)}
-                      className="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-white text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
+                      className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                     >
                       <Printer className="w-3.5 h-3.5 text-indigo-600" />
-                      Print Delivery Invoice
+                      চালান প্রিন্ট / PDF
                     </button>
                   </div>
                 </div>
@@ -140,15 +169,15 @@ export const ClientOrdersView: React.FC = () => {
                 <div className="p-4 border-b border-slate-100 bg-white">
                   <div className="grid grid-cols-4 gap-2 text-center text-xs">
                     {[
-                      { status: 'RECEIVED', label: '1. Received' },
-                      { status: 'PROCESSING', label: '2. Staging / Picking' },
-                      { status: 'DISPATCHED', label: '3. Dispatched' },
-                      { status: 'DELIVERED', label: '4. Delivered' }
+                      { status: 'RECEIVED', label: '১. প্রাপ্তি' },
+                      { status: 'PROCESSING', label: '২. প্যাকিং' },
+                      { status: 'DISPATCHED', label: '৩. ডেলিভারি রুট' },
+                      { status: 'DELIVERED', label: '৪. সম্পন্ন' }
                     ].map((step, idx) => {
                       const stages = ['RECEIVED', 'PROCESSING', 'DISPATCHED', 'DELIVERED'];
-                      const currentIdx = stages.indexOf(order.status);
+                      const currentIdx = stages.indexOf(currentStatus === 'NEW_ALARM' ? 'RECEIVED' : currentStatus === 'CONFIRMED' || currentStatus === 'PACKED' ? 'PROCESSING' : currentStatus === 'ON_ROUTE' ? 'DISPATCHED' : currentStatus);
                       const isComplete = currentIdx >= idx;
-                      const isCurrent = order.status === step.status;
+                      const isCurrent = currentIdx === idx;
 
                       return (
                         <div key={step.status} className="flex flex-col items-center">
@@ -177,7 +206,7 @@ export const ClientOrdersView: React.FC = () => {
                 {/* Items Summary */}
                 <div className="p-4 space-y-2">
                   <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                    Pack Items Ordered ({totalItemsCount} packs)
+                    অর্ডারকৃত পণ্য তালিকা ({totalItemsCount} কার্টুন/প্যাক)
                   </div>
                   <div className="divide-y divide-slate-100">
                     {order.items.map(item => (
@@ -190,7 +219,7 @@ export const ClientOrdersView: React.FC = () => {
                             {item.product?.name || 'Product SKU'}
                           </span>
                           <span className="text-slate-400 text-[11px] ml-2">
-                            ({item.product?.packUnit || 'Pack'})
+                            ({item.product?.packSize || item.product?.packUnit || 'Pack'})
                           </span>
                         </div>
                         <div className="flex items-center gap-4 text-right">
@@ -206,16 +235,16 @@ export const ClientOrdersView: React.FC = () => {
                   </div>
 
                   {order.notes && (
-                    <div className="mt-2 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-slate-600">
-                      <strong>Dispatch Note:</strong> {order.notes}
+                    <div className="mt-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-slate-600">
+                      <strong>ডেলিভারি নোট:</strong> {order.notes}
                     </div>
                   )}
 
                   {/* Total row */}
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="font-bold text-slate-600">Wholesale Total Amount:</span>
+                    <span className="font-bold text-slate-600">মোট পাইকারি প্রদেয় মূল্য:</span>
                     <span className="text-base font-extrabold text-indigo-600">
-                      {formatCurrency(order.totalAmount, currency)}
+                      {formatCurrency(totalAmount, currency)}
                     </span>
                   </div>
                 </div>

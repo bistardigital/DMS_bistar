@@ -37,18 +37,24 @@ export const OrderManagement: React.FC = () => {
     return true;
   });
 
-  const getStatusBadge = (status: OrderStatus) => {
+  const getStatusBadge = (status: any) => {
     switch (status) {
       case 'RECEIVED':
+      case 'NEW_ALARM':
         return { label: 'Received', color: 'bg-amber-100 text-amber-800 border-amber-300', icon: Clock };
       case 'PROCESSING':
+      case 'CONFIRMED':
+      case 'PACKED':
         return { label: 'Processing', color: 'bg-indigo-100 text-indigo-800 border-indigo-300', icon: PackageCheck };
       case 'DISPATCHED':
+      case 'ON_ROUTE':
         return { label: 'Dispatched', color: 'bg-blue-100 text-blue-800 border-blue-300', icon: Truck };
       case 'DELIVERED':
         return { label: 'Delivered', color: 'bg-emerald-100 text-emerald-800 border-emerald-300', icon: CheckCircle2 };
       case 'CANCELLED':
         return { label: 'Cancelled', color: 'bg-rose-100 text-rose-800 border-rose-300', icon: XCircle };
+      default:
+        return { label: String(status || 'Received'), color: 'bg-slate-100 text-slate-800 border-slate-300', icon: Clock };
     }
   };
 
@@ -141,15 +147,18 @@ export const OrderManagement: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredOrders.map(order => {
-                const badge = getStatusBadge(order.status);
+                const currentStatus = order.orderStatus || order.status || 'RECEIVED';
+                const badge = getStatusBadge(currentStatus);
                 const StatusIcon = badge.icon;
-                const totalPacks = order.items.reduce((sum, it) => sum + it.quantity, 0);
+                const totalPacks = order.totalCartons || order.items.reduce((sum, it) => sum + it.quantity, 0);
+                const invNumber = order.invoiceNumber || order.orderNumber || order.id;
+                const totalAmount = order.totalWholesaleBdt ?? order.totalAmount ?? 0;
 
                 return (
                   <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900 font-mono">
-                        {order.orderNumber}
+                        {invNumber}
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
                         {new Date(order.createdAt).toLocaleDateString()} {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -178,7 +187,7 @@ export const OrderManagement: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="font-bold text-slate-900 text-sm">
-                        {formatCurrency(order.totalAmount, currency)}
+                        {formatCurrency(totalAmount, currency)}
                       </div>
                       {order.totalMrpAmount && (
                         <div className="text-[10px] text-slate-400 line-through">

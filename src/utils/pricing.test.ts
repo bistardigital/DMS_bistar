@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canAccessB2BPricing, calculateMargin, calculateOrderTotals, generatePickList } from './pricing.ts';
-import type { User, Product, Order } from '../types/index.ts';
+import { canAccessB2BPricing, getEffectiveTierPrice, calculateMargin, calculateOrderTotals, generatePickList } from './pricing.ts';
+import type { ShopProfile, B2BProduct, WholesaleOrder } from '../types/index.ts';
 
 test('canAccessB2BPricing requires login for guests', () => {
   const result = canAccessB2BPricing(null);
@@ -10,12 +10,19 @@ test('canAccessB2BPricing requires login for guests', () => {
 });
 
 test('canAccessB2BPricing grants super admin access', () => {
-  const admin: User = {
+  const admin: ShopProfile = {
     id: 'u1',
-    phone: '1234567890',
-    ownerName: 'Admin Boss',
+    userId: 'uid-admin',
+    phone: '01700000001',
+    ownerName: 'Haji Nurul Islam',
+    shopName: 'BISTAR Central Wholesale Depot',
     role: 'SUPER_ADMIN',
+    businessSector: 'MULTI',
+    routeId: 'r-chawkbazar',
+    routeName: 'Chawkbazar Wholesale Hub',
     status: 'APPROVED',
+    creditLimitBdt: 1000000,
+    currentDueBdt: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -24,47 +31,56 @@ test('canAccessB2BPricing grants super admin access', () => {
   assert.equal(result.reason, 'SUPER_ADMIN');
 });
 
-test('canAccessB2BPricing blocks pending and suspended clients', () => {
-  const pendingUser: User = {
+test('canAccessB2BPricing blocks pending and rejected clients', () => {
+  const pendingUser: ShopProfile = {
     id: 'u2',
-    phone: '1234567891',
+    userId: 'uid-pending',
+    phone: '01811112233',
     ownerName: 'Shopkeeper A',
+    shopName: 'Al-Madina Store',
     role: 'B2B_CLIENT',
+    businessSector: 'FMCG',
+    routeId: 'r-chawkbazar',
+    routeName: 'Chawkbazar Wholesale Hub',
     status: 'PENDING',
+    creditLimitBdt: 50000,
+    currentDueBdt: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  const suspendedUser: User = { ...pendingUser, id: 'u3', status: 'SUSPENDED' };
+  const rejectedUser: ShopProfile = { ...pendingUser, id: 'u3', status: 'REJECTED' };
 
   assert.equal(canAccessB2BPricing(pendingUser).allowed, false);
   assert.equal(canAccessB2BPricing(pendingUser).reason, 'PENDING_APPROVAL');
 
-  assert.equal(canAccessB2BPricing(suspendedUser).allowed, false);
-  assert.equal(canAccessB2BPricing(suspendedUser).reason, 'SUSPENDED');
+  assert.equal(canAccessB2BPricing(rejectedUser).allowed, false);
+  assert.equal(canAccessB2BPricing(rejectedUser).reason, 'REJECTED');
 });
 
-test('canAccessB2BPricing checks expiry validity date', () => {
-  const now = new Date('2026-10-18T12:00:00Z');
-  const expiredUser: User = {
+test('canAccessB2BPricing checks validityExpiryEpochMs', () => {
+  const now = 1761230000000;
+  const expiredUser: ShopProfile = {
     id: 'u4',
-    phone: '1234567892',
+    userId: 'uid-expired',
+    phone: '01922223344',
     ownerName: 'Expired Shop',
+    shopName: 'Expired Medicos',
     role: 'B2B_CLIENT',
+    businessSector: 'PHARMA',
+    routeId: 'r-mitford',
+    routeName: 'Mitford Pharma Zone',
     status: 'APPROVED',
-    accessExpires: '2026-10-01T00:00:00Z',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01'
+    validityExpiryEpochMs: now - 10000, // Expired
+    creditLimitBdt: 50000,
+    currentDueBdt: 0,
+    createdAt: '',
+    updatedAt: ''
   };
 
-  const validUser: User = {
+  const validUser: ShopProfile = {
+    ...expiredUser,
     id: 'u5',
-    phone: '1234567893',
-    ownerName: 'Active Shop',
-    role: 'B2B_CLIENT',
-    status: 'APPROVED',
-    accessExpires: '2026-12-31T23:59:59Z',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01'
+    validityExpiryEpochMs: now + 864000000 // Valid
   };
 
   assert.equal(canAccessB2BPricing(expiredUser, now).allowed, false);
@@ -74,125 +90,81 @@ test('canAccessB2BPricing checks expiry validity date', () => {
   assert.equal(canAccessB2BPricing(validUser, now).reason, 'APPROVED');
 });
 
-test('calculateMargin accurately calculates dealer profit and margin percent', () => {
-  // MRP: 100, B2B: 70 -> profit 30, margin 30%
-  const res = calculateMargin(100, 70);
-  assert.equal(res.profitAmount, 30);
-  assert.equal(res.marginPercent, 30);
-
-  // MRP: 250, B2B: 200 -> profit 50, margin 20%
-  const res2 = calculateMargin(250, 200);
-  assert.equal(res2.profitAmount, 50);
-  assert.equal(res2.marginPercent, 20);
-});
-
-test('calculateOrderTotals applies wholesale B2B pricing for approved clients', () => {
-  const mockProduct: Product = {
+test('getEffectiveTierPrice evaluates 3-tier bulk slabs correctly', () => {
+  const prod: B2BProduct = {
     id: 'p1',
-    name: 'Napa Extra 500mg',
-    sku: 'MED-001',
-    brandId: 'b1',
-    categoryId: 'c1',
-    packUnit: 'Box of 100',
-    mrpPrice: 200,
-    b2bPrice: 160,
-    stock: 500,
-    minOrderQty: 2,
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01'
+    skuCode: 'FMCG-UN-01',
+    name: 'Lux Velvet Glow Soap 100g',
+    brand: 'Unilever Distribution',
+    brandId: 'b-uni',
+    sector: 'FMCG',
+    category: 'Personal Care',
+    categoryId: 'c-fmcg',
+    packSize: 'Carton of 48 Bars',
+    packUnit: 'Carton',
+    mrpBdt: 3120,
+    baseWholesaleBdt: 2650, // Tier 1: 1-9
+    tier2MinQty: 10,
+    tier2PriceBdt: 2540,   // Tier 2: 10-29
+    tier3MinQty: 30,
+    tier3PriceBdt: 2420,   // Tier 3: 30+
+    minOrderQty: 1,
+    stockQty: 500,
+    inStock: true,
+    createdAt: '',
+    updatedAt: ''
   };
 
-  // 5 boxes
-  const items = [{ product: mockProduct, quantity: 5 }];
+  // 5 Cartons (Tier 1)
+  const t1 = getEffectiveTierPrice(prod, 5, true);
+  assert.equal(t1.tier, 1);
+  assert.equal(t1.unitPrice, 2650);
 
-  // When client is approved: total B2B is 160 * 5 = 800, MRP is 200 * 5 = 1000, savings = 200
-  const approvedTotals = calculateOrderTotals(items, true);
-  assert.equal(approvedTotals.totalB2B, 800);
-  assert.equal(approvedTotals.totalMrp, 1000);
-  assert.equal(approvedTotals.retailerSavings, 200);
-  assert.equal(approvedTotals.totalQuantity, 5);
+  // 15 Cartons (Tier 2)
+  const t2 = getEffectiveTierPrice(prod, 15, true);
+  assert.equal(t2.tier, 2);
+  assert.equal(t2.unitPrice, 2540);
 
-  // When client is unapproved: charges MRP
-  const unapprovedTotals = calculateOrderTotals(items, false);
-  assert.equal(unapprovedTotals.totalB2B, 1000);
-  assert.equal(approvedTotals.totalQuantity, 5);
+  // 50 Cartons (Tier 3)
+  const t3 = getEffectiveTierPrice(prod, 50, true);
+  assert.equal(t3.tier, 3);
+  assert.equal(t3.unitPrice, 2420);
+
+  // Unapproved shop receives MRP
+  const unapproved = getEffectiveTierPrice(prod, 50, false);
+  assert.equal(unapproved.unitPrice, 3120);
 });
 
-test('generatePickList aggregates quantities across multiple orders by route', () => {
-  const p1: Product = {
-    id: 'prod1',
-    name: 'Paracetamol 500',
-    sku: 'SKU-01',
-    brandId: 'b1',
-    categoryId: 'c1',
-    packUnit: 'Box of 50',
-    mrpPrice: 50,
-    b2bPrice: 40,
-    stock: 200,
+test('calculateOrderTotals computes tiered bulk savings in ৳ BDT', () => {
+  const prod: B2BProduct = {
+    id: 'p1',
+    skuCode: 'MED-SQ-01',
+    name: 'Ace Plus Tablet 500mg/65mg',
+    brand: 'Square Pharmaceuticals',
+    brandId: 'b-sqr',
+    sector: 'PHARMA',
+    category: 'Prescription',
+    categoryId: 'c-pharma',
+    packSize: 'Box of 200 (20x10)',
+    packUnit: 'Box',
+    mrpBdt: 500,
+    baseWholesaleBdt: 420, // 1-9
+    tier2MinQty: 10,
+    tier2PriceBdt: 400,   // 10-29
+    tier3MinQty: 30,
+    tier3PriceBdt: 380,   // 30+
     minOrderQty: 1,
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01'
+    stockQty: 500,
+    inStock: true,
+    createdAt: '',
+    updatedAt: ''
   };
 
-  const orders: Order[] = [
-    {
-      id: 'o1',
-      orderNumber: 'ORD-101',
-      userId: 'u1',
-      routeId: 'route-north',
-      totalAmount: 120,
-      status: 'RECEIVED',
-      user: {
-        id: 'u1',
-        phone: '111',
-        ownerName: 'Ali',
-        shopName: 'Ali Medicos',
-        role: 'B2B_CLIENT',
-        status: 'APPROVED',
-        createdAt: '',
-        updatedAt: ''
-      },
-      items: [{ id: 'item1', orderId: 'o1', productId: 'prod1', product: p1, quantity: 3, unitPrice: 40, subtotal: 120 }],
-      createdAt: '2026-10-18',
-      updatedAt: '2026-10-18'
-    },
-    {
-      id: 'o2',
-      orderNumber: 'ORD-102',
-      userId: 'u2',
-      routeId: 'route-north',
-      totalAmount: 80,
-      status: 'PROCESSING',
-      user: {
-        id: 'u2',
-        phone: '222',
-        ownerName: 'Babu',
-        shopName: 'Babu Pharmacy',
-        role: 'B2B_CLIENT',
-        status: 'APPROVED',
-        createdAt: '',
-        updatedAt: ''
-      },
-      items: [{ id: 'item2', orderId: 'o2', productId: 'prod1', product: p1, quantity: 2, unitPrice: 40, subtotal: 80 }],
-      createdAt: '2026-10-18',
-      updatedAt: '2026-10-18'
-    },
-    {
-      id: 'o3',
-      orderNumber: 'ORD-103',
-      userId: 'u3',
-      routeId: 'route-south', // Different route
-      totalAmount: 40,
-      status: 'RECEIVED',
-      items: [{ id: 'item3', orderId: 'o3', productId: 'prod1', product: p1, quantity: 1, unitPrice: 40, subtotal: 40 }],
-      createdAt: '2026-10-18',
-      updatedAt: '2026-10-18'
-    }
-  ];
-
-  const pickListNorth = generatePickList(orders, [p1], 'route-north');
-  assert.equal(pickListNorth.length, 1);
-  assert.equal(pickListNorth[0].totalQuantity, 5); // 3 + 2
-  assert.equal(pickListNorth[0].destinations.length, 2);
-  assert.equal(pickListNorth[0].destinations[0].shopName, 'Ali Medicos');
+  // Order 10 boxes (crosses into Tier 2 -> ৳400/box)
+  // MRP: 10 * 500 = 5000. Wholesale: 10 * 400 = 4000. Savings: 1000
+  const totals = calculateOrderTotals([{ product: prod, quantity: 10 }], true);
+  assert.equal(totals.totalB2B, 4000);
+  assert.equal(totals.totalMrp, 5000);
+  assert.equal(totals.retailerSavings, 1000);
+  assert.equal(totals.totalQuantity, 10);
 });

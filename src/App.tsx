@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DmsProvider, useDms } from './context/DmsContext.tsx';
 import { Navbar } from './components/Navbar.tsx';
 import { ProductFilters } from './components/ProductFilters.tsx';
@@ -8,6 +8,7 @@ import { CartDrawer } from './components/CartDrawer.tsx';
 import { ClientRegistrationModal } from './components/ClientRegistrationModal.tsx';
 import { ClientOrdersView } from './components/ClientOrdersView.tsx';
 import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
+import { AdminLoginModal } from './components/admin/AdminLoginModal.tsx';
 import { PwaInstallPrompt } from './components/PwaInstallPrompt.tsx';
 import {
   Boxes,
@@ -15,9 +16,9 @@ import {
   PackageCheck,
   ShieldAlert,
   ShoppingCart,
-  Sparkles,
   Lock,
-  ArrowRight
+  ArrowRight,
+  Shield
 } from 'lucide-react';
 import { canAccessB2BPricing } from './utils/pricing.ts';
 
@@ -26,18 +27,43 @@ function MainLayout() {
     products,
     currentUser,
     cart,
+    isAdminAuthenticated,
     unseenOrdersCount
   } = useDms();
 
   const [currentTab, setCurrentTab] = useState<'catalog' | 'matrix' | 'orders' | 'admin'>('catalog');
   const [isRegistrationOpen, setIsRegistrationOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
 
   // Catalog filters
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedBrand, setSelectedBrand] = useState('ALL');
   const [inStockOnly, setInStockOnly] = useState(false);
+
+  // Check URL for /admin or #admin
+  useEffect(() => {
+    const handleUrlRoute = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      if (path.includes('/admin') || hash.includes('admin')) {
+        if (isAdminAuthenticated) {
+          setCurrentTab('admin');
+        } else {
+          setIsAdminLoginOpen(true);
+        }
+      }
+    };
+
+    handleUrlRoute();
+    window.addEventListener('hashchange', handleUrlRoute);
+    window.addEventListener('popstate', handleUrlRoute);
+    return () => {
+      window.removeEventListener('hashchange', handleUrlRoute);
+      window.removeEventListener('popstate', handleUrlRoute);
+    };
+  }, [isAdminAuthenticated]);
 
   const access = canAccessB2BPricing(currentUser);
   const isApproved = access.allowed;
@@ -75,6 +101,7 @@ function MainLayout() {
         setCurrentTab={setCurrentTab}
         openRegistrationModal={() => setIsRegistrationOpen(true)}
         openCartDrawer={() => setIsCartOpen(true)}
+        openAdminLoginModal={() => setIsAdminLoginOpen(true)}
       />
 
       {/* Main Container */}
@@ -89,22 +116,22 @@ function MainLayout() {
               <div>
                 <h2 className="text-sm font-bold text-slate-900">
                   {currentUser?.status === 'PENDING'
-                    ? 'Account Verification In Progress (Status: PENDING)'
-                    : 'B2B Wholesale Portal - Client Approval Required'}
+                    ? 'দোকান ভেরিফিকেশন চলছে (Status: PENDING)'
+                    : 'বিটুবি পাইকারি মার্কেটপ্লেস - অনুমোদিত গ্রাহকদের জন্য উন্মুক্ত'}
                 </h2>
                 <p className="text-xs text-slate-600 mt-0.5">
                   {currentUser?.status === 'PENDING'
-                    ? 'Your shop registration is under distributor review. You can browse product names and MRPs, but wholesale tiered pricing is locked.'
-                    : 'Wholesale prices and bulk order checkout are reserved for verified retailers, pharmacies, and dealers.'}
+                    ? 'আপনার দোকানের তথ্য ডিস্ট্রিবিউটর ভেরিফিকেশনের জন্য প্রক্রিয়াধীন রয়েছে। অনুমোদনের পর পাইকারি মূল্য দেখতে পাবেন।'
+                    : 'পাইকারি রেট ও অর্ডার করার সুবিধা শুধুমাত্র নিবন্ধিত ও অনুমোদিত ফার্মেসি, ডিপার্টমেন্টাল স্টোর ও ডিলারদের জন্য সংরক্ষিত।'}
                 </p>
               </div>
             </div>
 
             <button
               onClick={() => setIsRegistrationOpen(true)}
-              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-xs shrink-0 transition-colors"
+              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-xs shrink-0 transition-colors cursor-pointer"
             >
-              <span>{currentUser?.status === 'PENDING' ? 'Check Status' : 'Apply for Wholesale Account'}</span>
+              <span>{currentUser?.status === 'PENDING' ? 'স্ট্যাটাস দেখুন' : 'দোকান নিবন্ধন আবেদন'}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -127,14 +154,14 @@ function MainLayout() {
             {/* Results count & Quick Switch */}
             <div className="flex items-center justify-between text-xs text-slate-500">
               <div>
-                Showing <strong className="text-slate-900">{filteredProducts.length}</strong> wholesale SKUs
+                মোট <strong className="text-slate-900">{filteredProducts.length}</strong> টি পাইকারি পণ্য প্রদর্শিত
               </div>
               <button
                 onClick={() => setCurrentTab('matrix')}
-                className="text-indigo-600 font-bold hover:underline flex items-center gap-1"
+                className="text-indigo-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5" />
-                Switch to Quick Bulk Order Matrix →
+                একসাথে বাল্ক অর্ডার শিটে যান →
               </button>
             </div>
 
@@ -142,8 +169,8 @@ function MainLayout() {
             {filteredProducts.length === 0 ? (
               <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
                 <Boxes className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <h3 className="font-bold text-slate-800 text-sm">No Products Found</h3>
-                <p className="text-xs text-slate-400 mt-1">Try relaxing your search terms or filters.</p>
+                <h3 className="font-bold text-slate-800 text-sm">কোনো পণ্য পাওয়া যায়নি</h3>
+                <p className="text-xs text-slate-400 mt-1">অনুসন্ধান বা ফিল্টার পরিবর্তন করে পুনরায় চেষ্টা করুন।</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -170,11 +197,41 @@ function MainLayout() {
         {/* View 3: Client Orders & Tracking */}
         {currentTab === 'orders' && <ClientOrdersView />}
 
-        {/* View 4: Admin Hub */}
-        {currentTab === 'admin' && <AdminDashboard />}
+        {/* View 4: Admin Hub (Protected - Only for authenticated admin) */}
+        {currentTab === 'admin' && isAdminAuthenticated && <AdminDashboard />}
       </main>
 
-      {/* Mobile Sticky Bottom Navigation Bar */}
+      {/* Footer with Discreet Admin Gateway Link */}
+      <footer className="mt-auto border-t border-slate-200 bg-white text-slate-500 py-6 text-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-800">BISTAR B2B-DMS</span>
+            <span>• সার্বজনীন পাইকারি ডিস্ট্রিবিউশন প্ল্যাটফর্ম</span>
+          </div>
+
+          <div className="flex items-center gap-4 text-slate-400">
+            <span>ক্যাশ অন ডেলিভারি ও রুটভিত্তিক ডেলিভারি</span>
+            <span>•</span>
+            {/* Slash /admin direct entry */}
+            <button
+              onClick={() => {
+                if (isAdminAuthenticated) {
+                  setCurrentTab('admin');
+                } else {
+                  setIsAdminLoginOpen(true);
+                }
+              }}
+              className="hover:text-slate-700 text-slate-400 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+              title="Access Admin Hub (/admin)"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>ডিলার ও অ্যাডমিন লগইন (/admin)</span>
+            </button>
+          </div>
+        </div>
+      </footer>
+
+      {/* Mobile Sticky Bottom Navigation Bar (Clean Customer Experience) */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-slate-900 border-t border-slate-800 z-30 px-2 py-1.5 flex items-center justify-around shadow-2xl">
         <button
           onClick={() => setCurrentTab('catalog')}
@@ -183,7 +240,7 @@ function MainLayout() {
           }`}
         >
           <Boxes className="w-5 h-5 mb-0.5" />
-          <span>Catalog</span>
+          <span>ক্যাটালগ</span>
         </button>
 
         <button
@@ -193,7 +250,7 @@ function MainLayout() {
           }`}
         >
           <FileSpreadsheet className="w-5 h-5 mb-0.5" />
-          <span>Matrix</span>
+          <span>বাল্ক অর্ডার</span>
         </button>
 
         <button
@@ -203,28 +260,31 @@ function MainLayout() {
           }`}
         >
           <PackageCheck className="w-5 h-5 mb-0.5" />
-          <span>Orders</span>
+          <span>অর্ডারসমূহ</span>
         </button>
 
-        <button
-          onClick={() => setCurrentTab('admin')}
-          className={`flex flex-col items-center py-1 px-3 rounded-lg text-[10px] font-bold relative ${
-            currentTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
-          }`}
-        >
-          <ShieldAlert className="w-5 h-5 mb-0.5" />
-          <span>Admin</span>
-          {unseenOrdersCount > 0 && (
-            <span className="absolute top-0 right-2 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-          )}
-        </button>
+        {/* Admin icon only rendered if authenticated */}
+        {isAdminAuthenticated && (
+          <button
+            onClick={() => setCurrentTab('admin')}
+            className={`flex flex-col items-center py-1 px-3 rounded-lg text-[10px] font-bold relative ${
+              currentTab === 'admin' ? 'text-amber-400' : 'text-slate-400'
+            }`}
+          >
+            <ShieldAlert className="w-5 h-5 mb-0.5" />
+            <span>অ্যাডমিন</span>
+            {unseenOrdersCount > 0 && (
+              <span className="absolute top-0 right-2 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            )}
+          </button>
+        )}
 
         <button
           onClick={() => setIsCartOpen(true)}
           className="flex flex-col items-center py-1 px-3 rounded-lg text-[10px] font-bold text-slate-400 relative"
         >
           <ShoppingCart className="w-5 h-5 mb-0.5" />
-          <span>Cart</span>
+          <span>কার্ট</span>
           {totalCartCount > 0 && (
             <span className="absolute top-0.5 right-2 bg-indigo-500 text-white font-extrabold text-[9px] px-1 rounded-full">
               {totalCartCount}
@@ -248,6 +308,16 @@ function MainLayout() {
       <ClientRegistrationModal
         isOpen={isRegistrationOpen}
         onClose={() => setIsRegistrationOpen(false)}
+      />
+
+      {/* Admin Login Modal (Accessible via /admin or footer link) */}
+      <AdminLoginModal
+        isOpen={isAdminLoginOpen}
+        onClose={() => setIsAdminLoginOpen(false)}
+        onSuccess={() => {
+          setIsAdminLoginOpen(false);
+          setCurrentTab('admin');
+        }}
       />
 
       {/* PWA Install Banner */}

@@ -5,6 +5,7 @@ import { OrderManagement } from './OrderManagement.tsx';
 import { RoutePickList } from './RoutePickList.tsx';
 import { ClientApprovalTable } from './ClientApprovalTable.tsx';
 import { ProductManagementModal } from './ProductManagementModal.tsx';
+import { MultiOsArchitectureGuide } from './MultiOsArchitectureGuide.tsx';
 import {
   ShieldAlert,
   Package,
@@ -16,7 +17,8 @@ import {
   Volume2,
   BellRing,
   MapPin,
-  Clock
+  Clock,
+  Cpu
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -30,15 +32,15 @@ export const AdminDashboard: React.FC = () => {
     unseenOrdersCount
   } = useDms();
 
-  const [adminTab, setAdminTab] = useState<'orders' | 'picklist' | 'clients' | 'inventory'>('orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'picklist' | 'clients' | 'inventory' | 'multios'>('orders');
 
   const pendingClientsCount = users.filter(u => u.role === 'B2B_CLIENT' && u.status === 'PENDING').length;
   const totalRevenue = orders
     .filter(o => o.status !== 'CANCELLED')
-    .reduce((sum, o) => sum + o.totalAmount, 0);
+    .reduce((sum, o) => sum + (o.totalWholesaleBdt || o.totalAmount || 0), 0);
 
   const activeOrdersCount = orders.filter(
-    o => o.status === 'RECEIVED' || o.status === 'PROCESSING' || o.status === 'DISPATCHED'
+    o => o.status === 'RECEIVED' || o.status === 'PROCESSING' || o.status === 'DISPATCHED' || o.orderStatus === 'NEW_ALARM' || o.orderStatus === 'CONFIRMED' || o.orderStatus === 'PACKED' || o.orderStatus === 'ON_ROUTE'
   ).length;
 
   return (
@@ -56,7 +58,7 @@ export const AdminDashboard: React.FC = () => {
             Super Admin & Dispatch Command
           </h1>
           <p className="text-xs text-slate-400 mt-1 max-w-xl">
-            Real-time distributor operations: manage wholesale catalog, dual tiered pricing, route schedules, client gating approvals, and audio order alerts.
+            Real-time distributor operations: manage wholesale catalog, 3-tier bulk pricing, route pick-lists, client gating approvals, credit ledger, and loud order alarms.
           </p>
         </div>
 
@@ -64,7 +66,7 @@ export const AdminDashboard: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             onClick={triggerTestAlarm}
-            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+            className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
             title="Play warehouse order siren chime"
           >
             <BellRing className="w-4 h-4" />
@@ -75,7 +77,7 @@ export const AdminDashboard: React.FC = () => {
 
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
             <span>Wholesale Revenue</span>
             <DollarSign className="w-4 h-4 text-emerald-600" />
@@ -88,7 +90,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
             <span>Active Dispatch Orders</span>
             <Package className="w-4 h-4 text-indigo-600" />
@@ -101,7 +103,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
             <span>Client Approvals</span>
             <Clock className="w-4 h-4 text-amber-500" />
@@ -114,7 +116,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase">
             <span>Delivery Routes</span>
             <MapPin className="w-4 h-4 text-purple-600" />
@@ -132,7 +134,7 @@ export const AdminDashboard: React.FC = () => {
       <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setAdminTab('orders')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors relative ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors relative cursor-pointer ${
             adminTab === 'orders'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
@@ -149,7 +151,7 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setAdminTab('picklist')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors cursor-pointer ${
             adminTab === 'picklist'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
@@ -161,14 +163,14 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setAdminTab('clients')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors relative ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors relative cursor-pointer ${
             adminTab === 'clients'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>B2B Client Approvals & Gating</span>
+          <span>B2B Client Approvals & Credit Ledger</span>
           {pendingClientsCount > 0 && (
             <span className="bg-amber-500 text-slate-950 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
               {pendingClientsCount}
@@ -178,14 +180,26 @@ export const AdminDashboard: React.FC = () => {
 
         <button
           onClick={() => setAdminTab('inventory')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors ${
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors cursor-pointer ${
             adminTab === 'inventory'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>Dual Pricing & Route Schedules</span>
+          <span>3-Tier Pricing & Route Schedules</span>
+        </button>
+
+        <button
+          onClick={() => setAdminTab('multios')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors cursor-pointer ${
+            adminTab === 'multios'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+          }`}
+        >
+          <Cpu className="w-4 h-4" />
+          <span>Multi-OS Expansion Guide (ওয়েব, অ্যান্ড্রয়েড, ডেস্কটপ)</span>
         </button>
       </div>
 
@@ -194,6 +208,7 @@ export const AdminDashboard: React.FC = () => {
       {adminTab === 'picklist' && <RoutePickList />}
       {adminTab === 'clients' && <ClientApprovalTable />}
       {adminTab === 'inventory' && <ProductManagementModal />}
+      {adminTab === 'multios' && <MultiOsArchitectureGuide />}
     </div>
   );
 };
